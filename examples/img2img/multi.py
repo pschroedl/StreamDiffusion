@@ -2,6 +2,8 @@ import glob
 import os
 import sys
 from typing import Literal, Dict, Optional
+import torch
+from PIL import Image
 
 import fire
 
@@ -16,7 +18,7 @@ CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 def main(
     input: str = os.path.join(CURRENT_DIR, "..", "..", "images", "inputs"),
     output: str = os.path.join(CURRENT_DIR, "..", "..", "images", "outputs"),
-    model_id_or_path: str = "KBlueLeaf/kohaku-v2.1",
+    model_id_or_path: str = "stabilityai/sd-turbo",
     lora_dict: Optional[Dict[str, float]] = None,
     prompt: str = "1girl with brown dog hair, thick glasses, smiling",
     negative_prompt: str = "low quality, bad quality, blurry, low resolution",
@@ -75,11 +77,13 @@ def main(
     if guidance_scale <= 1.0:
         cfg_type = "none"
 
+    frame_buffer_size = 2  # Set desired frame buffer size
+    
     stream = StreamDiffusionWrapper(
         model_id_or_path=model_id_or_path,
         lora_dict=lora_dict,
-        t_index_list=[32, 40, 45],
-        frame_buffer_size=1,
+        t_index_list=[45],  # Single timestep to simplify
+        frame_buffer_size=frame_buffer_size,
         width=width,
         height=height,
         warmup=10,
@@ -99,24 +103,45 @@ def main(
     )
 
     images = glob.glob(os.path.join(input, "*"))
-    images = images + [images[-1]] * (stream.batch_size - 1)
-    outputs = []
-
-    for i in range(stream.batch_size - 1):
-        image = images.pop(0)
-        outputs.append(image)
-        output_image = stream(image=image)
-
-    for image in images:
-        outputs.append(image)
+    
+    # Process images in batches of frame_buffer_size
+    def preprocess_batch(image_paths):
+        """Preprocess a batch of images into a single tensor"""
+        batch_tensors = []
+        for path in image_paths:
+            img = Image.open(path).convert("RGB").resize((width, height))
+            tensor = stream.stream.image_processor.preprocess(img, height, width)
+            batch_tensors.append(tensor)
+        return torch.cat(batch_tensors, dim=0).to(device=stream.device, dtype=stream.dtype)
+    
+    # Pad images if needed to make batches
+    while len(images) % frame_buffer_size != 0:
+        images.append(images[-1])  # Duplicate last image
+    
+    # Process images in batches
+    for i in range(0, len(images), frame_buffer_size):
+        batch_paths = images[i:i + frame_buffer_size]
+        
         try:
-            output_image = stream(image=image)
-        except Exception:
+            # Create batched input tensor
+            batch_tensor = preprocess_batch(batch_paths)
+            
+            # Process the batch
+            output_tensor = stream.stream(batch_tensor)
+            
+            # Post-process and save results
+            output_images = stream.postprocess_image(output_tensor, output_type="pil")
+            
+            # Save each image in the batch
+            for j, (path, output_img) in enumerate(zip(batch_paths, output_images)):
+                basename = os.path.splitext(os.path.basename(path))[0]
+                output_filename = f"{basename}_batch{i//frame_buffer_size}_frame{j}.png"
+                output_img.save(os.path.join(output, output_filename))
+                print(f"Saved: {output_filename}")
+                
+        except Exception as e:
+            print(f"Error processing batch {i//frame_buffer_size}: {e}")
             continue
-
-        name = outputs.pop(0)
-        basename = os.path.splitext(os.path.basename(name))[0]
-        output_image.save(os.path.join(output, f"{basename}.png"))
 
 
 if __name__ == "__main__":
