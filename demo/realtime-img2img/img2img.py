@@ -92,6 +92,18 @@ class Pipeline:
         if self.use_controlnet and 'engine_dir' in self.controlnet_config:
             engine_dir = self.controlnet_config['engine_dir']
         
+        # Get frame_buffer_size from config or args
+        if self.use_controlnet:
+            frame_buffer_size = self.controlnet_config.get('frame_buffer_size', 1)
+        else:
+            frame_buffer_size = args.frame_buffer_size
+        
+        # Initialize frame buffer for Stream Batch processing
+        self.frame_buffer_size = frame_buffer_size
+        self.frame_buffer = []
+        self.frame_counter = 0
+        self.buffer_filled = False  # Track if buffer has been filled for first time
+        
         # Determine model and parameters based on config
         if self.use_controlnet:
             print("__init__: Using ControlNet mode")
@@ -101,7 +113,6 @@ class Pipeline:
             cfg_type = self.controlnet_config.get('cfg_type', 'none')
             use_lcm_lora = self.controlnet_config.get('use_lcm_lora', False)
             use_tiny_vae = self.controlnet_config.get('use_tiny_vae', args.taesd)
-            frame_buffer_size = self.controlnet_config.get('frame_buffer_size', 1)
             
             # Prepare ControlNet configurations
             controlnet_configs = []
@@ -156,7 +167,7 @@ class Pipeline:
                 device=device,
                 dtype=torch_dtype,
                 t_index_list=[35, 45],
-                frame_buffer_size=args.frame_buffer_size, # Use argument --frame-buffer-size (with no ControlNet config)
+                frame_buffer_size=frame_buffer_size,
                 width=params.width,
                 height=params.height,
                 use_lcm_lora=False,
@@ -212,13 +223,47 @@ class Pipeline:
                 guidance_scale=guidance_scale,
             )
 
+        # Add current frame to the buffer
+        self.frame_buffer.append(params.image)
+        self.frame_counter += 1
+        
+        # If the buffer isn't full yet, return the input image to avoid errors
+        if not self.buffer_filled and len(self.frame_buffer) < self.frame_buffer_size:
+            return params.image
+        
+        # Once the buffer is full, set the flag and start processing
+        self.buffer_filled = True
+        
+        # Maintain a sliding window of frames
+        if len(self.frame_buffer) > self.frame_buffer_size:
+            self.frame_buffer.pop(0)
+
+        # The batch of frames to process is the current buffer
+        frames_to_process = self.frame_buffer.copy()
+
         if self.use_controlnet:
-            # ControlNet mode: update control image and use PIL image
-            self.stream.update_control_image_efficient(params.image)
-            output_image = self.stream(params.image)
+            # ControlNet mode: update control image and pass the entire batch
+            if len(frames_to_process) == 1:
+                # Single frame
+                self.stream.update_control_image_efficient(frames_to_process[0])
+                output_image = self.stream(frames_to_process[0])
+            else:
+                # Multiple frames for stream batch
+                # Update control image with the most recent frame
+                self.stream.update_control_image_efficient(frames_to_process[-1])
+                output_images = self.stream(frames_to_process)
+                # Return the last (most recent) image from the output batch
+                output_image = output_images[-1] if isinstance(output_images, list) else output_images
         else:
-            # Standard mode: use original logic with preprocessed tensor
-            image_tensor = self.stream.preprocess_image(params.image)
-            output_image = self.stream(image=image_tensor, prompt=params.prompt)
+            # Standard mode: pass the entire batch to the stream
+            if len(frames_to_process) == 1:
+                # Single frame
+                image_tensor = self.stream.preprocess_image(frames_to_process[0])
+                output_image = self.stream(image=image_tensor, prompt=params.prompt)
+            else:
+                # Multiple frames for stream batch
+                output_images = self.stream(frames_to_process)
+                # Return the last (most recent) image from the output batch
+                output_image = output_images[-1] if isinstance(output_images, list) else output_images
 
         return output_image

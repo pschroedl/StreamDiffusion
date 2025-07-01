@@ -256,7 +256,7 @@ class StreamDiffusionWrapper:
 
     def __call__(
         self,
-        image: Optional[Union[str, Image.Image, torch.Tensor]] = None,
+        image: Optional[Union[str, Image.Image, torch.Tensor, List[Union[str, Image.Image]]]] = None,
         prompt: Optional[str] = None,
     ) -> Union[Image.Image, List[Image.Image]]:
         """
@@ -264,17 +264,19 @@ class StreamDiffusionWrapper:
 
         Parameters
         ----------
-        image : Optional[Union[str, Image.Image, torch.Tensor]]
-            The image to generate from.
+        image : Optional[Union[str, Image.Image, torch.Tensor, List[Union[str, Image.Image]]]]
+            The image(s) to generate from.
         prompt : Optional[str]
             The prompt to generate images from.
 
         Returns
         -------
         Union[Image.Image, List[Image.Image]]
-            The generated image.
+            The generated image(s).
         """
         if self.mode == "img2img":
+            if image is None:
+                raise ValueError("Image is required for img2img mode.")
             return self.img2img(image, prompt)
         else:
             return self.txt2img(prompt)
@@ -317,41 +319,49 @@ class StreamDiffusionWrapper:
         return image
 
     def img2img(
-        self, image: Union[str, Image.Image, torch.Tensor], prompt: Optional[str] = None
-    ) -> Union[Image.Image, List[Image.Image], torch.Tensor, np.ndarray]:
+        self, image: Union[str, Image.Image, torch.Tensor, List[Union[str, Image.Image]]], prompt: Optional[str] = None
+    ) -> Union[Image.Image, List[Image.Image]]:
         """
-        Performs img2img.
-
+        Performs img2img with support for multi-frame Stream Batch processing.
+        
         Parameters
         ----------
-        image : Union[str, Image.Image, torch.Tensor]
-            The image to generate from.
+        image : Union[str, Image.Image, torch.Tensor, List[Union[str, Image.Image]]]
+            The image(s) to generate from. Can be:
+            - Single image (str, Image.Image, or torch.Tensor)  
+            - List of images for stream batch processing
+            - Tensor with batch dimension for multiple images
 
         Returns
         -------
-        Image.Image
-            The generated image.
+        Union[Image.Image, List[Image.Image]]
+            The generated image(s).
         """
         if prompt is not None:
             self.stream.update_prompt(prompt)
 
-        if isinstance(image, str) or isinstance(image, Image.Image):
-            image = self.preprocess_image(image)
-
+        # The pipeline's __call__ now expects a list of images or a pre-batched tensor.
+        # No preprocessing is needed here as the pipeline handles it.
         image_tensor = self.stream(image)
-        image = self.postprocess_image(image_tensor, output_type=self.output_type)
+        
+        # Post-process the output tensor into PIL images
+        images = self.postprocess_image(image_tensor, output_type="pil")
 
         if self.use_safety_checker:
             safety_checker_input = self.feature_extractor(
-                image, return_tensors="pt"
+                images, return_tensors="pt"
             ).to(self.device)
             _, has_nsfw_concept = self.safety_checker(
                 images=image_tensor.to(self.dtype),
                 clip_input=safety_checker_input.pixel_values.to(self.dtype),
             )
-            image = self.nsfw_fallback_img if has_nsfw_concept[0] else image
+            if has_nsfw_concept[0]:
+                if isinstance(images, list):
+                    images = [self.nsfw_fallback_img] * len(images)
+                else:
+                    images = self.nsfw_fallback_img
 
-        return image
+        return images
 
     def preprocess_image(self, image: Union[str, Image.Image]) -> torch.Tensor:
         """

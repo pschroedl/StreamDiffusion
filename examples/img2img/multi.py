@@ -10,7 +10,7 @@ import fire
 
 sys.path.append(os.path.join(os.path.dirname(__file__), "..", ".."))
 
-from utils.wrapper import StreamDiffusionWrapper
+from utils.wrapper_batch import StreamDiffusionWrapper
 
 CURRENT_DIR = os.path.dirname(os.path.abspath(__file__))
 
@@ -125,6 +125,7 @@ def main(
         try:
             # Create batched input tensor
             batch_tensor = preprocess_batch(batch_paths)
+            print(f"multi.py: processing batch {i//frame_buffer_size}, input tensor shape: {batch_tensor.shape}")
             
             # Process the batch
             output_tensor = stream.stream(batch_tensor)

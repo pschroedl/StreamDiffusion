@@ -662,7 +662,35 @@ class BaseControlNetPipeline:
                 control_image.shape[0] != main_batch_size):
                 # Only expand if needed for TensorRT and batch sizes don't match
                 if control_image.dim() == 4:
-                    current_control_image = control_image.repeat(main_batch_size // control_image.shape[0], 1, 1, 1)
+                    # For multi-frame batch processing, we need to be more careful about expansion
+                    # Ensure we don't create invalid batch dimensions
+                    if main_batch_size > control_image.shape[0]:
+                        # Calculate proper repeat factor - avoid integer division issues
+                        repeat_factor = main_batch_size // control_image.shape[0]
+                        if main_batch_size % control_image.shape[0] != 0:
+                            # If not evenly divisible, expand to match exactly
+                            current_control_image = control_image.repeat(repeat_factor + 1, 1, 1, 1)[:main_batch_size]
+                        else:
+                            current_control_image = control_image.repeat(repeat_factor, 1, 1, 1)
+                    else:
+                        # If control image has more batches than needed, take first main_batch_size
+                        current_control_image = control_image[:main_batch_size]
+                else:
+                    # For 3D tensors, add batch dimension then expand
+                    current_control_image = control_image.unsqueeze(0)
+                    if main_batch_size > 1:
+                        current_control_image = current_control_image.repeat(main_batch_size, 1, 1, 1)
+            elif control_image.shape[0] != main_batch_size:
+                # Non-TensorRT case - also needs proper batch expansion
+                if control_image.dim() == 4:
+                    if main_batch_size > control_image.shape[0]:
+                        repeat_factor = main_batch_size // control_image.shape[0]
+                        if main_batch_size % control_image.shape[0] != 0:
+                            current_control_image = control_image.repeat(repeat_factor + 1, 1, 1, 1)[:main_batch_size]
+                        else:
+                            current_control_image = control_image.repeat(repeat_factor, 1, 1, 1)
+                    else:
+                        current_control_image = control_image[:main_batch_size]
                 else:
                     current_control_image = control_image.unsqueeze(0).repeat(main_batch_size, 1, 1, 1)
             

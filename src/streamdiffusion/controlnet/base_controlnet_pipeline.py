@@ -15,7 +15,7 @@ from .preprocessors import get_preprocessor
 # Setup logger for parallel processing
 logger = logging.getLogger(__name__)
 
-class BaseControlNetPipeline:
+class FBaseControlNetPipeline:
     """
     Base ControlNet-enabled StreamDiffusion pipeline
     
