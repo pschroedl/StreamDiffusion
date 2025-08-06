@@ -238,12 +238,13 @@ class Pipeline:
 
         return output_image
 
-    def update_ipadapter_scale(self, scale: float) -> bool:
+    def update_ipadapter_config(self, scale: float = None, style_image: Image.Image = None) -> bool:
         """
-        Update IPAdapter scale/strength in real-time
+        Update IPAdapter configuration in real-time using unified approach
         
         Args:
-            scale: New IPAdapter scale value
+            scale: New IPAdapter scale value (optional)
+            style_image: New style image (PIL Image, optional)
             
         Returns:
             bool: True if successful, False otherwise
@@ -251,38 +252,30 @@ class Pipeline:
         if not self.has_ipadapter:
             return False
             
+        if scale is None and style_image is None:
+            return False  # Nothing to update
+            
         try:
-            # Check if the stream has update_scale method (IPAdapterPipeline)
-            if hasattr(self.stream, 'update_scale'):
-                self.stream.update_scale(scale)
-                return True
-            else:
-                return False
+            # Build config dict with only the parameters that were provided
+            ipadapter_config = {}
+            if scale is not None:
+                ipadapter_config['scale'] = scale
+            if style_image is not None:
+                ipadapter_config['style_image'] = style_image
+                
+            # Use unified update_stream_params approach
+            self.stream.update_stream_params(ipadapter_config=ipadapter_config)
+            return True
         except Exception as e:
             return False
 
+    def update_ipadapter_scale(self, scale: float) -> bool:
+        """Legacy method - use update_ipadapter_config instead"""
+        return self.update_ipadapter_config(scale=scale)
+
     def update_ipadapter_style_image(self, style_image: Image.Image) -> bool:
-        """
-        Update IPAdapter style image in real-time
-        
-        Args:
-            style_image: New style image (PIL Image)
-            
-        Returns:
-            bool: True if successful, False otherwise
-        """
-        if not self.has_ipadapter:
-            return False
-            
-        try:
-            # Check if the stream has update_style_image method (IPAdapterPipeline)
-            if hasattr(self.stream, 'update_style_image'):
-                self.stream.update_style_image(style_image)
-                return True
-            else:
-                return False
-        except Exception as e:
-            return False
+        """Legacy method - use update_ipadapter_config instead"""
+        return self.update_ipadapter_config(style_image=style_image)
 
     def get_ipadapter_info(self) -> dict:
         """

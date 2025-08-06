@@ -446,6 +446,8 @@ class StreamDiffusionWrapper:
         normalize_seed_weights: Optional[bool] = None,
         # ControlNet configuration
         controlnet_config: Optional[List[Dict[str, Any]]] = None,
+        # IPAdapter configuration
+        ipadapter_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Update streaming parameters efficiently in a single call.
@@ -485,6 +487,8 @@ class StreamDiffusionWrapper:
             Each dict contains: model_id, preprocessor, conditioning_scale, enabled, 
             preprocessor_params, etc. System will diff current vs desired state and 
             perform minimal add/remove/update operations.
+        ipadapter_config : Optional[Dict[str, Any]]
+            IPAdapter configuration dict containing scale, style_image, etc.
         """
         # Handle all parameters via parameter updater (including ControlNet)
         self.stream._param_updater.update_stream_params(
@@ -501,6 +505,7 @@ class StreamDiffusionWrapper:
             normalize_prompt_weights=normalize_prompt_weights,
             normalize_seed_weights=normalize_seed_weights,
             controlnet_config=controlnet_config,
+            ipadapter_config=ipadapter_config,
         )
 
     def get_normalize_prompt_weights(self) -> bool:
@@ -1449,6 +1454,10 @@ class StreamDiffusionWrapper:
             else:
                 stream = self._apply_controlnet_patch(stream, controlnet_config, acceleration, engine_dir, self._detected_model_type, self._is_sdxl)
 
+        # Apply IPAdapter patch if needed (after ControlNet)
+        if use_ipadapter and ipadapter_config:
+            self._apply_ipadapter_patch(stream, ipadapter_config)
+
         return stream
 
     def _apply_controlnet_patch(self, stream: StreamDiffusion, controlnet_config: Union[Dict[str, Any], List[Dict[str, Any]]], acceleration: str = "none", engine_dir: str = "engines", model_type: str = "SD15", is_sdxl: bool = False, engine_manager = None, cuda_stream = None) -> Any:
@@ -1984,6 +1993,47 @@ class StreamDiffusionWrapper:
         """
         self.stream._param_updater.remove_seed_at_index(index, interpolation_method)
 
-
-
-
+    def _apply_ipadapter_patch(self, stream, ipadapter_config: Union[Dict[str, Any], List[Dict[str, Any]]]):
+        """
+        Apply IPAdapter functionality to existing stream (add attributes instead of wrapping)
+        
+        Args:
+            stream: Existing StreamDiffusion or ControlNet pipeline
+            ipadapter_config: IPAdapter configuration
+        """
+        from streamdiffusion.ipadapter import BaseIPAdapterPipeline
+        
+        # Get the underlying StreamDiffusion object
+        underlying_stream = stream.stream if hasattr(stream, 'stream') else stream
+        
+        # Create IPAdapter pipeline for the functionality
+        ipadapter_pipeline = BaseIPAdapterPipeline(
+            stream_diffusion=underlying_stream,
+            device=self.device,
+            dtype=self.dtype
+        )
+        
+        # Add IPAdapter functionality to the existing stream by setting attributes
+        stream.ipadapter = None  # Will be set when configured
+        stream.update_scale = ipadapter_pipeline.update_scale
+        stream.update_style_image = ipadapter_pipeline.update_style_image
+        
+        # Configure the IPAdapter if config provided
+        if ipadapter_config:
+            if isinstance(ipadapter_config, list):
+                # Use first config if multiple provided
+                config = ipadapter_config[0]
+            else:
+                config = ipadapter_config
+                
+            if config.get('enabled', True):
+                ipadapter_pipeline.set_ipadapter(
+                    ipadapter_model_path=config['ipadapter_model_path'],
+                    image_encoder_path=config['image_encoder_path'],
+                    style_image=config.get('style_image'),
+                    scale=config.get('scale', 1.0)
+                )
+                # Copy the configured IPAdapter to the stream
+                stream.ipadapter = ipadapter_pipeline.ipadapter
+                stream.scale = ipadapter_pipeline.scale
+                stream.style_image = ipadapter_pipeline.style_image

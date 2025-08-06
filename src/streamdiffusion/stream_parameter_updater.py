@@ -278,6 +278,7 @@ class StreamParameterUpdater:
         seed_interpolation_method: Literal["linear", "slerp"] = "linear",
         normalize_seed_weights: Optional[bool] = None,
         controlnet_config: Optional[List[Dict[str, Any]]] = None,
+        ipadapter_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """Update streaming parameters efficiently in a single call."""
 
@@ -330,6 +331,11 @@ class StreamParameterUpdater:
         if controlnet_config is not None:
             logger.info(f"update_stream_params: Updating ControlNet configuration with {len(controlnet_config)} controlnets")
             self._update_controlnet_config(controlnet_config)
+        
+        # Handle IPAdapter configuration updates
+        if ipadapter_config is not None:
+            logger.info(f"update_stream_params: Updating IPAdapter configuration")
+            self._update_ipadapter_config(ipadapter_config)
 
     @torch.no_grad()
     def update_prompt_weights(
@@ -1081,4 +1087,83 @@ class StreamParameterUpdater:
             current_config.append(config)
         
         return current_config
+
+    def _update_ipadapter_config(self, desired_config: Dict[str, Any]) -> None:
+        """
+        Update IPAdapter configuration.
+        
+        Args:
+            desired_config: IPAdapter configuration dict containing: 
+                           ipadapter_model_path, image_encoder_path, style_image, scale, enabled, etc.
+        """
+        # Find the IPAdapter pipeline
+        ipadapter_pipeline = self._get_ipadapter_pipeline()
+        
+        if not ipadapter_pipeline:
+            logger.warning(f"_update_ipadapter_config: No IPAdapter pipeline found")
+            return
+        
+        # Update scale if provided
+        if 'scale' in desired_config:
+            current_scale = getattr(ipadapter_pipeline, 'scale', 1.0)
+            desired_scale = desired_config['scale']
+            
+            if current_scale != desired_scale:
+                logger.info(f"_update_ipadapter_config: Updating scale: {current_scale} → {desired_scale}")
+                ipadapter_pipeline.update_scale(desired_scale)
+        
+        # Update style image if provided
+        if 'style_image' in desired_config:
+            style_image = desired_config['style_image']
+            if style_image is not None:
+                logger.info(f"_update_ipadapter_config: Updating style image")
+                ipadapter_pipeline.update_style_image(style_image)
+
+    def _get_ipadapter_pipeline(self):
+        """
+        Get the IPAdapter pipeline from the pipeline structure (following ControlNet pattern).
+        
+        Returns:
+            IPAdapter pipeline object or None if not found
+        """
+        # Check if stream is IPAdapter pipeline directly
+        if hasattr(self.stream, 'ipadapter'):
+            return self.stream
+            
+        # Check if stream has nested stream (ControlNet wrapper)
+        if hasattr(self.stream, 'stream') and hasattr(self.stream.stream, 'ipadapter'):
+            return self.stream.stream
+        
+        # Check if we have a wrapper reference and can access through it
+        if self.wrapper and hasattr(self.wrapper, 'stream'):
+            if hasattr(self.wrapper.stream, 'ipadapter'):
+                return self.wrapper.stream
+            elif hasattr(self.wrapper.stream, 'stream') and hasattr(self.wrapper.stream.stream, 'ipadapter'):
+                return self.wrapper.stream.stream
+        
+        return None
+
+    def _get_current_ipadapter_config(self) -> Optional[Dict[str, Any]]:
+        """
+        Get current IPAdapter configuration by introspecting the pipeline state.
+        
+        Returns:
+            Current IPAdapter configuration dict or None if no IPAdapter
+        """
+        ipadapter_pipeline = self._get_ipadapter_pipeline()
+        if not ipadapter_pipeline:
+            return None
+        
+        config = {
+            'scale': getattr(ipadapter_pipeline, 'scale', 1.0),
+            'enabled': hasattr(ipadapter_pipeline, 'ipadapter') and ipadapter_pipeline.ipadapter is not None
+        }
+        
+        # Add style image info if available
+        if hasattr(ipadapter_pipeline, 'style_image') and ipadapter_pipeline.style_image:
+            config['has_style_image'] = True
+        else:
+            config['has_style_image'] = False
+            
+        return config
 

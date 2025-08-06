@@ -375,6 +375,8 @@ class StreamDiffusion:
         seed_list: Optional[List[Tuple[int, float]]] = None,
         seed_interpolation_method: Literal["linear", "slerp"] = "linear",
         normalize_seed_weights: Optional[bool] = None,
+        # IPAdapter parameters
+        ipadapter_config: Optional[Dict[str, Any]] = None,
     ) -> None:
         """
         Update streaming parameters efficiently in a single call.
@@ -407,6 +409,8 @@ class StreamDiffusion:
         normalize_seed_weights : Optional[bool]
             Whether to normalize seed weights in blending to sum to 1, by default None (no change).
             When False, weights > 1 will amplify noise.
+        ipadapter_config : Optional[Dict[str, Any]]
+            IPAdapter configuration dict containing scale, style_image, etc.
         """
         self._param_updater.update_stream_params(
             num_inference_steps=num_inference_steps,
@@ -421,6 +425,7 @@ class StreamDiffusion:
             seed_interpolation_method=seed_interpolation_method,
             normalize_prompt_weights=normalize_prompt_weights,
             normalize_seed_weights=normalize_seed_weights,
+            ipadapter_config=ipadapter_config,
         )
 
 
