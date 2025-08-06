@@ -9,7 +9,7 @@
   import ControlNetConfig from '$lib/components/ControlNetConfig.svelte';
   import PromptBlendingControl from '$lib/components/PromptBlendingControl.svelte';
   import SeedBlendingControl from '$lib/components/SeedBlendingControl.svelte';
-  import ResolutionPicker from '$lib/components/ResolutionPicker.svelte';
+  import ResolutionPicker from '$lib/components/ResolutionPicker.svelte'; // this is missing
   import Spinner from '$lib/icons/spinner.svelte';
   import Warning from '$lib/components/Warning.svelte';
   import { lcmLiveStatus, lcmLiveActions, LCMLiveStatus } from '$lib/lcmLive';
